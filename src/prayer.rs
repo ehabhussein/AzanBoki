@@ -151,7 +151,16 @@ pub fn calculate(date: Date, city: &City, settings: &Settings) -> Result<DailySc
 }
 
 pub fn format_clock(time: &Zoned) -> String {
-    format!("{:02}:{:02}", time.hour(), time.minute())
+    format_clock_parts(i64::from(time.hour()), i64::from(time.minute()))
+}
+
+fn format_clock_parts(hour: i64, minute: i64) -> String {
+    let period = if hour < 12 { "AM" } else { "PM" };
+    let hour = match hour % 12 {
+        0 => 12,
+        hour => hour,
+    };
+    format!("{hour}:{minute:02} {period}")
 }
 
 pub fn format_countdown(seconds: i64) -> String {
@@ -220,5 +229,13 @@ mod tests {
         assert_eq!(format_countdown(3_900), "1h 05m");
         assert_eq!(format_countdown(125), "2m");
         assert_eq!(format_countdown(20), "less than a minute");
+    }
+
+    #[test]
+    fn clock_uses_twelve_hour_am_pm_format() {
+        assert_eq!(format_clock_parts(0, 5), "12:05 AM");
+        assert_eq!(format_clock_parts(7, 9), "7:09 AM");
+        assert_eq!(format_clock_parts(12, 0), "12:00 PM");
+        assert_eq!(format_clock_parts(19, 30), "7:30 PM");
     }
 }

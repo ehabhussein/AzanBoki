@@ -28,6 +28,7 @@ embed a browser engine or run a local web server.
 - 64 built-in cities across 32 countries with IANA time zones and DST handling
 - Recalculation on startup, after settings changes, on date changes, and at
   02:00 local time
+- Clear 12-hour prayer times with AM/PM indicators
 - A verified CC0 built-in Azan plus custom OGG, MP3, and WAV recordings
 - Optional separate recording for Fajr
 - Preview, volume, stop, per-prayer switches, pause, and one-hour mute controls
