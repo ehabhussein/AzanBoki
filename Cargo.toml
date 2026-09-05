@@ -15,7 +15,7 @@ build = "build.rs"
 [dependencies]
 adhaan = { path = "vendor/adhaan" }
 anyhow = "1"
-auto-launch = "0.5"
+auto-launch = "0.6"
 directories = "6"
 jiff = { version = "0.2", features = ["serde"] }
 rfd = "0.15"
