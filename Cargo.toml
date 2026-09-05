@@ -13,7 +13,7 @@ publish = false
 build = "build.rs"
 
 [dependencies]
-adhaan = "0.3"
+adhaan = { path = "vendor/adhaan" }
 anyhow = "1"
 auto-launch = "0.5"
 directories = "6"

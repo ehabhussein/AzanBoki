@@ -129,8 +129,6 @@ dependencies = [
 [[package]]
 name = "adhaan"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77d001996db3aafdac37eec31fd6dda61f43af2f7ee6b1c004461bb1d7f2ab8a"
 dependencies = [
  "jiff",
 ]

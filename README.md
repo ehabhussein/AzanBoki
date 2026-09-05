@@ -23,8 +23,10 @@ embed a browser engine or run a local web server.
 
 ## Features
 
-- Offline Fajr, sunrise, Dhuhr, Asr, Maghrib, and Isha calculation
+- Offline astronomical Fajr, sunrise, Dhuhr, Asr, Maghrib, and Isha calculation
 - 12 calculation methods, Standard/Hanafi Asr, and high-latitude rules
+- Second-precision scheduling with no hidden minute adjustments; displayed
+  times round upward so they never advertise a time before the calculated start
 - 64 built-in cities across 32 countries with IANA time zones and DST handling
 - Recalculation on startup, after settings changes, on date changes, and at
   02:00 local time
@@ -105,11 +107,25 @@ Slint window + native tray
           │
    persisted settings
           │
-prayer calculator ── scheduler ── Rodio/CPAL audio output
+astronomical calculator ── scheduler ── Rodio/CPAL audio output
 ```
 
 The scheduler wakes in short intervals while the settings window can remain
 hidden. It opens the audio output only while previewing or playing an Azan.
+
+### How prayer times are calculated
+
+AzanBoki calculates times locally from the selected city's latitude, longitude,
+IANA time zone, and civil date. The solar engine derives the Sun's declination
+and equation of time, then solves the solar hour angle for sunrise/sunset and
+the selected method's Fajr and Isha twilight angles. Dhuhr is solar transit;
+Asr uses the selected Standard (shadow factor 1) or Hanafi (factor 2) rule.
+
+The Egyptian method uses 19.5° for Fajr and 17.5° for Isha. No blanket safety
+minutes are added or subtracted. Exact seconds are retained for playback. Since
+the interface shows whole minutes, it rounds an instant upward—for example,
+`5:05:20 AM` is shown as `5:06 AM`—so the shown time is never earlier than the
+calculated start. The scheduler still uses `5:05:20 AM` internally.
 
 ## Privacy and local data
 

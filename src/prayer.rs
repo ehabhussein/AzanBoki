@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
-use jiff::{Zoned, civil::Date, tz::TimeZone};
+use jiff::{RoundMode, Unit, Zoned, ZonedRound, civil::Date, tz::TimeZone};
 
-use adhaan::{Coordinates, HighLatitudeRule, Parameters, Prayer, PrayerTimes, prominent_methods};
+use adhaan::{
+    Coordinates, HighLatitudeRule, Method, Parameters, Prayer, PrayerTimes, TimeAdjustment,
+    prominent_methods,
+};
 
 use crate::{cities::City, settings::Settings};
 
@@ -99,7 +102,7 @@ pub fn local_now(city: &City) -> Result<Zoned> {
 pub fn calculate(date: Date, city: &City, settings: &Settings) -> Result<DailySchedule> {
     let timezone = TimeZone::get(city.timezone)
         .with_context(|| format!("unknown time zone {}", city.timezone))?;
-    let method: &'static dyn adhaan::Method = match settings.calculation_method.as_str() {
+    let method: &'static dyn Method = match settings.calculation_method.as_str() {
         "Egyptian" => &prominent_methods::Egyptian,
         "Umm al-Qura" => &prominent_methods::UmmAlQura,
         "Karachi" => &prominent_methods::Karachi,
@@ -118,7 +121,7 @@ pub fn calculate(date: Date, city: &City, settings: &Settings) -> Result<DailySc
         "Twilight angle" => HighLatitudeRule::TwilightAngle,
         _ => HighLatitudeRule::MiddleOfTheNight,
     };
-    let parameters = Parameters::new(method).with_high_latitude_rule(high_latitude_rule);
+    let parameters = astronomical_parameters(method, high_latitude_rule);
     let coordinates = Coordinates {
         latitude: city.latitude,
         longitude: city.longitude,
@@ -143,7 +146,9 @@ pub fn calculate(date: Date, city: &City, settings: &Settings) -> Result<DailySc
         .into_iter()
         .map(|(kind, prayer)| PrayerEvent {
             kind,
-            time: calculated.time_of(prayer).with_time_zone(timezone.clone()),
+            time: calculated
+                .unrounded_time_of(prayer)
+                .with_time_zone(timezone.clone()),
         })
         .collect();
 
@@ -151,7 +156,35 @@ pub fn calculate(date: Date, city: &City, settings: &Settings) -> Result<DailySc
 }
 
 pub fn format_clock(time: &Zoned) -> String {
-    format_clock_parts(i64::from(time.hour()), i64::from(time.minute()))
+    let display_time = time
+        .round(
+            ZonedRound::new()
+                .smallest(Unit::Minute)
+                .mode(RoundMode::Ceil),
+        )
+        .expect("rounding a prayer time to minutes must succeed");
+    format_clock_parts(
+        i64::from(display_time.hour()),
+        i64::from(display_time.minute()),
+    )
+}
+
+fn astronomical_parameters(
+    method: &'static dyn Method,
+    high_latitude_rule: HighLatitudeRule,
+) -> Parameters {
+    let adjustment = method.adjustments();
+    let neutralizer = TimeAdjustment {
+        fajr: -adjustment.fajr,
+        sunrise: -adjustment.sunrise,
+        dhuhr: -adjustment.dhuhr,
+        asr: -adjustment.asr,
+        maghrib: -adjustment.maghrib,
+        isha: -adjustment.isha,
+    };
+    Parameters::new(method)
+        .with_high_latitude_rule(high_latitude_rule)
+        .with_adjustments(neutralizer)
 }
 
 fn format_clock_parts(hour: i64, minute: i64) -> String {
@@ -181,12 +214,11 @@ pub fn next_event<'a>(
     today: &'a DailySchedule,
     tomorrow: &'a DailySchedule,
 ) -> Option<&'a PrayerEvent> {
-    let now_second = now.timestamp().as_second();
     today
         .events
         .iter()
         .chain(tomorrow.events.iter())
-        .find(|event| event.time.timestamp().as_second() > now_second)
+        .find(|event| event.time.timestamp() > now.timestamp())
 }
 
 #[cfg(test)]
@@ -213,6 +245,31 @@ mod tests {
     }
 
     #[test]
+    fn cairo_schedule_preserves_astronomical_seconds() {
+        let city = cities::by_id("eg-cairo");
+        let schedule = calculate(date(2026, 9, 5), city, &Settings::default()).unwrap();
+        assert!(schedule.events.iter().any(|event| event.time.second() != 0));
+    }
+
+    #[test]
+    fn astronomical_mode_cancels_intrinsic_minute_adjustments() {
+        let parameters = astronomical_parameters(
+            &prominent_methods::Egyptian,
+            HighLatitudeRule::MiddleOfTheNight,
+        );
+        for prayer in [
+            Prayer::Fajr,
+            Prayer::Sunrise,
+            Prayer::Dhuhr,
+            Prayer::AsrAwwal,
+            Prayer::Maghrib,
+            Prayer::Isha,
+        ] {
+            assert_eq!(parameters.time_adjustments(prayer), 0);
+        }
+    }
+
+    #[test]
     fn hanafi_asr_is_later_than_standard() {
         let city = cities::by_id("eg-cairo");
         let standard = calculate(date(2026, 9, 5), city, &Settings::default()).unwrap();
@@ -222,6 +279,22 @@ mod tests {
         };
         let hanafi = calculate(date(2026, 9, 5), city, &settings).unwrap();
         assert!(hanafi.events[3].time > standard.events[3].time);
+    }
+
+    #[test]
+    fn changing_city_recalculates_from_the_new_coordinates() {
+        let settings = Settings::default();
+        let cairo = calculate(date(2026, 9, 5), cities::by_id("eg-cairo"), &settings).unwrap();
+        let giza = calculate(date(2026, 9, 5), cities::by_id("eg-giza"), &settings).unwrap();
+
+        assert_ne!(
+            cairo.events[0].time.timestamp(),
+            giza.events[0].time.timestamp()
+        );
+        assert_ne!(
+            format_clock(&cairo.events[0].time),
+            format_clock(&giza.events[0].time)
+        );
     }
 
     #[test]
@@ -237,5 +310,57 @@ mod tests {
         assert_eq!(format_clock_parts(7, 9), "7:09 AM");
         assert_eq!(format_clock_parts(12, 0), "12:00 PM");
         assert_eq!(format_clock_parts(19, 30), "7:30 PM");
+    }
+
+    #[test]
+    fn displayed_minute_never_precedes_the_calculated_instant() {
+        let exact = date(2026, 9, 5)
+            .at(5, 5, 1, 0)
+            .in_tz("Africa/Cairo")
+            .unwrap();
+        assert_eq!(format_clock(&exact), "5:06 AM");
+
+        let on_minute = date(2026, 9, 5)
+            .at(5, 5, 0, 0)
+            .in_tz("Africa/Cairo")
+            .unwrap();
+        assert_eq!(format_clock(&on_minute), "5:05 AM");
+    }
+
+    #[test]
+    fn giza_week_matches_the_astronomical_golden_schedule() {
+        let city = cities::by_id("eg-giza");
+        let expected = [
+            [
+                "5:06 AM", "6:35 AM", "12:54 PM", "4:27 PM", "7:14 PM", "8:33 PM",
+            ],
+            [
+                "5:06 AM", "6:35 AM", "12:54 PM", "4:26 PM", "7:12 PM", "8:31 PM",
+            ],
+            [
+                "5:07 AM", "6:36 AM", "12:54 PM", "4:26 PM", "7:11 PM", "8:30 PM",
+            ],
+            [
+                "5:08 AM", "6:36 AM", "12:53 PM", "4:25 PM", "7:10 PM", "8:29 PM",
+            ],
+            [
+                "5:08 AM", "6:37 AM", "12:53 PM", "4:24 PM", "7:09 PM", "8:27 PM",
+            ],
+            [
+                "5:09 AM", "6:37 AM", "12:53 PM", "4:24 PM", "7:07 PM", "8:26 PM",
+            ],
+            [
+                "5:10 AM", "6:38 AM", "12:52 PM", "4:23 PM", "7:06 PM", "8:25 PM",
+            ],
+        ];
+        for (day, expected_times) in (5..=11).zip(expected) {
+            let schedule = calculate(date(2026, 9, day), city, &Settings::default()).unwrap();
+            let actual = schedule
+                .events
+                .iter()
+                .map(|event| format_clock(&event.time))
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected_times, "unexpected Giza times on day {day}");
+        }
     }
 }

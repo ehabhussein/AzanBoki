@@ -187,6 +187,7 @@ fn maybe_play(now: &jiff::Zoned, today: &DailySchedule, context: PlaybackContext
         store,
     } = context;
     let now_second = now.timestamp().as_second();
+    let now_nanosecond = now.timestamp().as_nanosecond();
     if settings.muted_until_unix > now_second || !settings.master_enabled {
         return;
     }
@@ -194,9 +195,9 @@ fn maybe_play(now: &jiff::Zoned, today: &DailySchedule, context: PlaybackContext
         if !event.kind.can_play() || !settings.prayer_enabled(event.kind) {
             continue;
         }
-        let delta = now_second - event.time.timestamp().as_second();
+        let delta_nanoseconds = now_nanosecond - event.time.timestamp().as_nanosecond();
         let key = format!("{}:{}", today.date, event.kind.name());
-        if should_fire(delta, &key, last_played) {
+        if should_fire(delta_nanoseconds, &key, last_played) {
             match audio.play(settings.audio_for(event.kind), settings.volume) {
                 Ok(()) => {
                     *last_played = key.clone();
@@ -218,8 +219,16 @@ fn maybe_play(now: &jiff::Zoned, today: &DailySchedule, context: PlaybackContext
     }
 }
 
-fn should_fire(delta_seconds: i64, key: &str, last_played: &str) -> bool {
-    (0..=75).contains(&delta_seconds) && key != last_played
+fn should_fire(delta_nanoseconds: i128, key: &str, last_played: &str) -> bool {
+    const PLAYBACK_GRACE_NANOSECONDS: i128 = 75_000_000_000;
+    (0..=PLAYBACK_GRACE_NANOSECONDS).contains(&delta_nanoseconds) && key != last_played
+}
+
+fn seconds_until(now: &jiff::Zoned, event: &jiff::Zoned) -> i64 {
+    const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
+    let remaining = event.timestamp().as_nanosecond() - now.timestamp().as_nanosecond();
+    let rounded_up = (remaining.max(0) + NANOSECONDS_PER_SECOND - 1) / NANOSECONDS_PER_SECOND;
+    i64::try_from(rounded_up).unwrap_or(i64::MAX)
 }
 
 fn make_snapshot(
@@ -264,7 +273,7 @@ fn make_snapshot(
         next_arabic: next.map_or_else(String::new, |event| event.kind.arabic_name().into()),
         next_time: next.map_or_else(|| "—".into(), |event| prayer::format_clock(&event.time)),
         countdown: next.map_or_else(String::new, |event| {
-            prayer::format_countdown(event.time.timestamp().as_second() - now_second)
+            prayer::format_countdown(seconds_until(now, &event.time))
         }),
         status,
         prayers,
@@ -278,9 +287,13 @@ mod tests {
     #[test]
     fn playback_has_a_short_resume_grace_and_deduplicates() {
         assert!(should_fire(0, "2026-09-05:Fajr", ""));
-        assert!(should_fire(75, "2026-09-05:Fajr", ""));
-        assert!(!should_fire(76, "2026-09-05:Fajr", ""));
+        assert!(should_fire(75_000_000_000, "2026-09-05:Fajr", ""));
+        assert!(!should_fire(75_000_000_001, "2026-09-05:Fajr", ""));
         assert!(!should_fire(-1, "2026-09-05:Fajr", ""));
-        assert!(!should_fire(10, "2026-09-05:Fajr", "2026-09-05:Fajr"));
+        assert!(!should_fire(
+            10_000_000_000,
+            "2026-09-05:Fajr",
+            "2026-09-05:Fajr"
+        ));
     }
 }

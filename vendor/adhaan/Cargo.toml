@@ -1,0 +1,19 @@
+[package]
+name = "adhaan"
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.85.0"
+description = "An Islamic prayer time calculator"
+license = "MIT"
+repository = "https://github.com/RagibHasin/adhaan"
+publish = false
+
+[lib]
+name = "adhaan"
+path = "src/lib.rs"
+
+[dependencies]
+jiff = "0.2.23"
+
+[dev-dependencies]
+approx = "0.5"
